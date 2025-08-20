@@ -1,6 +1,5 @@
 import copy
 import os
-import openai
 
 import modules.scripts as scripts
 import gradio as gr
@@ -8,21 +7,19 @@ from modules import images, shared, script_callbacks
 from modules.processing import Processed, process_images
 from modules.shared import state
 import modules.sd_samplers
-from scripts.chatgpt_answers import get_chatgpt_answers
-from scripts.chatgpt_utils import retry_query_chatgpt
+from scripts.ollama_answers import get_ollama_answers
 from scripts.template_utils import get_templates
+from scripts.ollama_list_models import list_ollama_models
 
 script_dir = scripts.basedir()
 
-def on_ui_settings():
-    section = ('chatgpt_utilities', "ChatGPT Utilities")
-    shared.opts.add_option("chatgpt_utilities_api_key", shared.OptionInfo("", "OpenAI API Key", section=section))
-
-script_callbacks.on_ui_settings(on_ui_settings)
-
 class Script(scripts.Script):
+    def __init__(self):
+        super().__init__()
+        self.ollama_model = "llama2"
+        
     def title(self):
-        return "ChatGPT"
+        return "Ollama"
 
     def ui(self, is_img2img):
         templates = get_templates(os.path.join(script_dir, "templates"))
@@ -32,8 +29,15 @@ class Script(scripts.Script):
                 label="Templates", 
                 choices=[t[0] for t in templates],
                 type="index", 
-                elem_id="chatgpt_template_dropdown")
-            #templates_load_button = gr.Button('🔄', elem_id="chatgpt_template_button4").style(full_width=False)
+                elem_id="ollama_template_dropdown")
+            # Ollama model selection (dynamic)
+            ollama_models = list_ollama_models()
+            ollama_model_dropdown = gr.Dropdown(
+                label="Ollama Model",
+                choices=ollama_models if ollama_models else ["llama2"],
+                value=ollama_models[0] if ollama_models else "llama2",
+                type="value",
+                elem_id="ollama_model_dropdown")
             precision_dropdown = gr.Dropdown(
                 label="Answer precision",
                 choices=["Specific", "Normal", "Dreamy", "Hallucinating"],
@@ -41,23 +45,23 @@ class Script(scripts.Script):
                 type="index",
             )
 
-        chatgpt_prompt = gr.Textbox(label="", placeholder="ChatGPT prompt (Try some templates for inspiration)", lines=4)
+        ollama_prompt = gr.Textbox(label="", placeholder="Ollama prompt (Try some templates for inspiration)", lines=4)
 
         with gr.Row():
-            chatgpt_batch_count = gr.Number(value=4, label="Response count")
-            chatgpt_append_to_prompt = gr.Checkbox(label="Append to original prompt instead of replacing it", default=False)
+            ollama_batch_count = gr.Number(value=4, label="Response count")
+            ollama_append_to_prompt = gr.Checkbox(label="Append to original prompt instead of replacing it", default=False)
 
         with gr.Row():
-            chatgpt_prepend_prompt = gr.Textbox(label="Prepend generated prompt with", lines=1)
-            chatgpt_append_prompt = gr.Textbox(label="Append generated prompt with", lines=1)
+            ollama_prepend_prompt = gr.Textbox(label="Prepend generated prompt with", lines=1)
+            ollama_append_prompt = gr.Textbox(label="Append generated prompt with", lines=1)
 
         with gr.Row():
-            chatgpt_no_iterate_seed = gr.Checkbox(label="Don't increment seed per permutation", default=False)
-            chatgpt_generate_original_prompt = gr.Checkbox(label="Generate original prompt also", default=False)
+            ollama_no_iterate_seed = gr.Checkbox(label="Don't increment seed per permutation", default=False)
+            ollama_generate_original_prompt = gr.Checkbox(label="Generate original prompt also", default=False)
 
         with gr.Row():
-            chatgpt_generate_debug_prompt = gr.Checkbox(label="DEBUG - Stop before image generation", default=False)
-            chatgpt_just_run_prompts = gr.Checkbox(label="OVERRIDE - Run prompts from textbox (one per line)", default=False)
+            ollama_generate_debug_prompt = gr.Checkbox(label="DEBUG - Stop before image generation", default=False)
+            ollama_just_run_prompts = gr.Checkbox(label="OVERRIDE - Run prompts from textbox (one per line)", default=False)
 
         with gr.Row():
             gr.HTML('<a href="https://github.com/hallatore/stable-diffusion-webui-chatgpt-utilities" target="_blank" style="text-decoration: underline;">Help & More Examples</a>')
@@ -76,52 +80,50 @@ class Script(scripts.Script):
 
         templates_dropdown.change(
             apply_template, 
-            inputs=[templates_dropdown, chatgpt_prompt, chatgpt_append_to_prompt], 
-            outputs=[chatgpt_prompt, chatgpt_append_to_prompt]
+            inputs=[templates_dropdown, ollama_prompt, ollama_append_to_prompt], 
+            outputs=[ollama_prompt, ollama_append_to_prompt]
         )
         
         return [
-            chatgpt_prompt, 
+            ollama_prompt, 
             precision_dropdown,
-            chatgpt_batch_count, 
-            chatgpt_append_to_prompt, 
-            chatgpt_prepend_prompt, 
-            chatgpt_append_prompt, 
-            chatgpt_no_iterate_seed, 
-            chatgpt_generate_original_prompt,
-            chatgpt_generate_debug_prompt,
-            chatgpt_just_run_prompts
+            ollama_batch_count, 
+            ollama_append_to_prompt, 
+            ollama_prepend_prompt, 
+            ollama_append_prompt, 
+            ollama_no_iterate_seed, 
+            ollama_generate_original_prompt,
+            ollama_generate_debug_prompt,
+            ollama_just_run_prompts,
+            ollama_model_dropdown
         ]
 
     def run(
             self, 
             p, 
-            chatgpt_prompt, 
+            ollama_prompt, 
             precision_dropdown,
-            chatgpt_batch_count, 
-            chatgpt_append_to_prompt, 
-            chatgpt_prepend_prompt, 
-            chatgpt_append_prompt,
-            chatgpt_no_iterate_seed, 
-            chatgpt_generate_original_prompt,
-            chatgpt_generate_debug_prompt,
-            chatgpt_just_run_prompts
+            ollama_batch_count, 
+            ollama_append_to_prompt, 
+            ollama_prepend_prompt, 
+            ollama_append_prompt,
+            ollama_no_iterate_seed, 
+            ollama_generate_original_prompt,
+            ollama_generate_debug_prompt,
+            ollama_just_run_prompts,
+            ollama_model_dropdown
         ):
         modules.processing.fix_seed(p)
 
-        openai.api_key = shared.opts.data.get("chatgpt_utilities_api_key", "")
+        model = ollama_model_dropdown or "llama2"
 
-        if openai.api_key == "":
-            raise Exception("OpenAI API Key is not set. Please set it in the settings menu.")
-        
-        if (chatgpt_prompt == ""):
-            raise Exception("ChatGPT prompt is empty.")
-        
-        if (chatgpt_batch_count < 1):
-            raise Exception("ChatGPT batch count needs to be 1 or higher.")
+        if (ollama_prompt == ""):
+            raise Exception("Ollama prompt is empty.")
+
+        if (ollama_batch_count < 1):
+            raise Exception("Ollama batch count needs to be 1 or higher.")
 
         temperature = 1.0
-
         if (precision_dropdown == 0):
             temperature = 0.5
         elif (precision_dropdown == 1):
@@ -134,36 +136,35 @@ class Script(scripts.Script):
         original_prompt = p.prompt[0] if type(p.prompt) == list else p.prompt
         prompts = []
 
-        if (chatgpt_just_run_prompts):
-            for prompt in chatgpt_prompt.splitlines():
+        if (ollama_just_run_prompts):
+            for prompt in ollama_prompt.splitlines():
                 prompts.append([prompt, prompt])
         else:
-            chatgpt_answers = get_chatgpt_answers(chatgpt_prompt, int(chatgpt_batch_count), temperature, original_prompt)
-            chatgpt_prefix = ""
+            ollama_answers = get_ollama_answers(
+                ollama_prompt, int(ollama_batch_count), temperature, original_prompt, model=model
+            )
+            ollama_prefix = ""
 
             if len(original_prompt) > 0:
-                if chatgpt_generate_original_prompt:
+                if ollama_generate_original_prompt:
                     prompts.append(["", original_prompt])
 
-                if chatgpt_append_to_prompt:
-                    chatgpt_prefix = f"{original_prompt}, "
+                if ollama_append_to_prompt:
+                    ollama_prefix = f"{original_prompt}, "
 
-            for answer in chatgpt_answers:
-                prompts.append([answer, f"{chatgpt_prefix}{chatgpt_prepend_prompt}{answer}{chatgpt_append_prompt}"])
+            for answer in ollama_answers:
+                prompts.append([answer, f"{ollama_prefix}{ollama_prepend_prompt}{answer}{ollama_append_prompt}"])
 
-            
             print(f"Prompts:\r\n" + "\r\n".join([p[1] for p in prompts]) + "\r\n")
 
-            if (chatgpt_generate_debug_prompt):
+            if (ollama_generate_debug_prompt):
                 raise Exception("DEBUG - Stopped before image generation.\r\n\r\n" + "\r\n".join([p[1] for p in prompts]))
-                           
+
         p.do_not_save_grid = True
         state.job_count = 0
         permutations = 0
-        
         state.job_count += len(prompts) * p.n_iter
         permutations += len(prompts)
-            
         print(f"Creating {permutations} image permutations")
         image_results = []
         all_prompts = []
@@ -174,14 +175,11 @@ class Script(scripts.Script):
             copy_p = copy.copy(p)
             copy_p.prompt = prompt[1]
             copy_p.seed = current_seed
-
-            if not chatgpt_no_iterate_seed:
+            if not ollama_no_iterate_seed:
                 current_seed += 1
-
             proc = process_images(copy_p)
             temp_grid = images.image_grid(proc.images, p.batch_size)
             image_results.append(temp_grid)
-
             all_prompts += proc.all_prompts
             infotexts += proc.infotexts
 

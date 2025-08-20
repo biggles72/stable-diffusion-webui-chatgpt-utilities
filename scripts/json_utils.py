@@ -2,7 +2,7 @@ import re
 import json5
 
 # Takes a string and attempts to parse it as JSON. Returns a JSON object.
-# Handles many edge cases caused by the way ChatGPT returns responses.
+# Handles many edge cases caused by the way LLMs return responses.
 def try_parse_json(input_text):
     input_text.index
     start_index_brackets = input_text.find('[')

@@ -1,11 +1,11 @@
 from functools import reduce
 import operator
 import re
-from scripts.chatgpt_utils import retry_query_chatgpt
+from scripts.chatgpt_utils import retry_query_ollama
 
 
-def get_chatgpt_answers(chatgpt_prompt, batch_count, temperature, original_prompt):
-    prompt_split = chatgpt_prompt.split("::")
+def get_ollama_answers(ollama_prompt, batch_count, temperature, original_prompt, model="llama2"):
+    prompt_split = ollama_prompt.split("::")
     prompts = []
     explode_prompts = False
 
@@ -27,22 +27,22 @@ def get_chatgpt_answers(chatgpt_prompt, batch_count, temperature, original_promp
 
     for prompt_count, prompt in prompts:
         prompt = prompt.replace("{prompt}", f'"{original_prompt}"')
-        chatgpt_answers = retry_query_chatgpt(prompt, prompt_count, temperature, 4)
+        ollama_answers = retry_query_ollama(prompt, prompt_count, temperature, 4, model=model)
 
         if (len(results) == 0):
-            results = chatgpt_answers
+            results = ollama_answers
             continue
 
         if (explode_prompts):
             temp_results = []
             for result in results:
-                for answer in chatgpt_answers:
+                for answer in ollama_answers:
                     seperator = " " if result.endswith(",") or result.endswith(".") else ", "
                     temp_results.append(f"{result}{seperator}{answer}")
 
             results = temp_results
         else:
-            for i, answer in enumerate(chatgpt_answers):
+            for i, answer in enumerate(ollama_answers):
                 seperator = " " if results[i].endswith(",") or results[i].endswith(".") else ", "
                 results[i] += f"{seperator}{answer}"
 

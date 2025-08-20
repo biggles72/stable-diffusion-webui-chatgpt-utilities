@@ -1,2 +1,2 @@
-openai
 json5
+requests

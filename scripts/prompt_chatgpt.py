@@ -7,7 +7,7 @@ from modules import images, shared, script_callbacks
 from modules.processing import Processed, process_images
 from modules.shared import state
 import modules.sd_samplers
-from scripts.ollama_answers import get_ollama_answers
+from scripts.chatgpt_answers import get_ollama_answers
 from scripts.template_utils import get_templates
 from scripts.ollama_list_models import list_ollama_models
 
